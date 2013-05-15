@@ -1,0 +1,270 @@
+#!/usr/bin/perl
+# Copyright Dalhousie University 2009 (c) - Karl Vollmer
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License v2
+# as published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+###############################################################################
+
+use strict; 
+use FindBin qw($Bin); 
+use Data::Dumper; 
+use Getopt::Long; 
+use Net::SMTP;
+use Sys::Syslog; 
+use File::Basename;
+
+# Load the Init script that in turn sets up configure() as well
+# as the config file
+require $Bin . '/init.pl'; 
+init(); 
+
+my $final_results;  
+my $pretest_results; 
+my $cluster_name; 
+my $verbose; 
+
+# Handle the text colors
+my $rgb_restore = "\e[00m";
+my $rgb_yellow  = "\e[00;33m";
+my $rgb_red     = "\e[01;31m";
+my $rgb_green   = "\e[01;32m";
+my $rgb_grey	= "\e[01;30m"; 
+
+Getopt::Long::Configure('bundling','no_ignore_case'); 
+GetOptions ( 
+	"cluster|c=s"	=> \$cluster_name,
+	"verbose|v"	=> \$verbose,); 
+
+if ($cluster_name eq "" || not $cluster_name) { 
+	print $rgb_red . "Error:$rgb_restore No config selected, unable to continue\n"; 
+	die; 
+} 
+
+# Make sure the config we've selected exists 
+if (! -s "$Bin/config/$cluster_name.cfg") { 
+	print "Error: Unable to find $cluster_name config file\n"; 
+	die; 
+} 
+
+# Load the base configuration
+my $cluster_config = read_config("$Bin/config/$cluster_name.cfg"); 
+configure($cluster_config); 
+my %core = configure('core'); 
+my $core = \%core; 
+
+# Default output option
+$core->{'stdout'} = $core->{'stdout'} ? $core->{'stdout'} : "true";
+
+#  Default text colors to nothing for remaining output
+#
+$rgb_restore = "";
+$rgb_yellow  = "";
+$rgb_red     = "";
+$rgb_green   = "";
+$rgb_grey	= ""; 
+
+if (lc($core->{'enable_text_colours'}) eq "yes") { 
+	$rgb_restore = "\e[00m";
+	$rgb_yellow  = "\e[00;33m";
+	$rgb_red     = "\e[01;31m";
+	$rgb_green   = "\e[01;32m";
+	$rgb_grey	= "\e[01;30m"; 
+} 
+
+# Construct base test dir, we'll need this to load things	
+my $base_test_dir = ($core->{'tests_basedir'}) ? $core->{'tests_basedir'} : $Bin . "/test";
+my $base_output_dir = ($core->{'output_basedir'}) ? $core->{'output_basedir'} : $Bin . "/output"; 
+
+# Load up the pre-tests
+if ($verbose) { print $rgb_yellow . "Reading Pre-Tests from $base_test_dir...$rgb_restore\n"; } 
+my @pre_tests = load_tests("$Bin/config/$cluster_name.pre.tests"); 
+
+# If we have some pre-tests to run, then run them
+if (scalar @pre_tests > 0) { 
+	if ($verbose) { print $rgb_yellow . "Starting Pre-Tests...$rgb_restore\n"; } 
+	$pretest_results = run_tests(\@pre_tests); 
+} 
+else { 
+	if ($verbose) { print $rgb_yellow . "No Pre-Tests found, continuing...$rgb_restore\n"; } 
+} 
+
+if ($pretest_results ne "") { 
+	if ($verbose) { 
+		print $rgb_red . "Error: Pre-Tests failed, stoping Unit tests$rgb_restore\n";
+		print $pretest_results; 
+	} 
+	exit 0; 
+} 
+
+# Load the tests up, this is a little complicated as we allow stars
+if ($verbose) { print $rgb_yellow . "Reading Unit tests from $base_test_dir...$rgb_restore\n"; } 
+my @unit_tests = load_tests("$Bin/config/$cluster_name.tests"); 
+
+if ($verbose) { print $rgb_yellow . "Starting Unit Tests... $rgb_restore\n"; } 
+my $final_results = run_tests(\@unit_tests); 
+
+# Now that we've run all the tests we just return the final results 
+# we send this to the output function 
+if ($verbose && $final_results ne "") { print "$rgb_yellow" . "Raw output of test results:$rgb_restore\n$final_results"; } 
+
+#### HANDLE THE OUTPUT ####
+# Just run through the possible methods with if statements perhaps? Should be 
+# A better way of dealing with this, but this is what we've got for now
+
+# Standard Out
+if (lc($core->{'stdout'}) eq "true") { 
+	print STDOUT $final_results; 
+} 
+# If Standard Error should get the results
+if (lc($core->{'stderr'}) eq "true") { 
+	print STDERR $final_results; 
+} 
+# If e-mail
+if (lc($core->{'mail'}) ne "false" && $core->{'mail'} && $final_results ne "") { 
+	my $hostname = `hostname`; 
+	chomp($hostname); 
+	my $subject = "[$hostname] - $cluster_name SysVerify Report";
+	send_mail($core->{'mail'},$subject,$final_results); 
+} 
+# IF syslog, requires syslog_facility
+if (lc($core->{'syslog'}) eq "true" && $final_results ne "") { 
+	openlog('sysverify',"nofatal",$core->{'syslog_facility'});
+	syslog("LOG_ERR",$final_results); 	
+	closelog()
+} 
+
+
+# load_tests
+# This sub loads the tests from a file parsing out the * syntax and returning 
+# an array of the filenames that we want to run against. It takes a config file
+# as a source
+sub load_tests() { 
+
+	my @unit_tests; 
+
+	open TESTFILE, shift;
+
+	while (my $line = <TESTFILE>) {
+
+	        chomp($line); 
+
+	        # Determine if we've got a star, if so then we need to LS the dir
+	        # and return a list of all of the scripts and jam it onto our scripts
+	        # array
+	        if ($line =~ /^#/ || $line =~ /^\s/) {
+	                # Skip comments
+	                next;
+	        }
+
+	        # Does the line end in a * 
+	        if ($line =~ /\*$/) { 
+	                # Strip the *
+	                $line =~ s/\*//;
+	                opendir(TESTDIR,$base_test_dir . $line) || die "Error: Unable to open directory $base_test_dir$line\n";
+	                while (my $subline = readdir(TESTDIR)) {
+	                        chomp($subline);
+	                        if ($subline =~ /^\./) { next; }
+	
+	                        if ( -f $base_test_dir . $line . $subline) {
+	                                if ($verbose) { print $rgb_grey . "Adding: $line$subline$rgb_restore\n"; } 
+	                                push (@unit_tests,$base_test_dir . $line . $subline);
+	                        }
+	
+	                } # End while subdir
+	                closedir(TESTDIR);
+	        }
+	
+
+	        # Verify that the file exists
+	        if ( -f $base_test_dir . $line ) {
+	                # Add this line to the unit tests array
+	                if ($verbose) { print $rgb_grey . "Adding: $line$rgb_restore\n"; }
+	                push(@unit_tests,$base_test_dir . $line);
+	        }
+
+	} # End while test list  
+
+	close TESTFILE;
+
+	return @unit_tests; 
+
+} # load_tests
+
+# run_tests
+# This runs the tests from an array and returns a string of results, if nothing fails
+# then it will return ""
+sub run_tests() { 
+
+	my $tests = shift; 
+	my $final_results = "";
+
+	# Now that we have our unit tests, let's start running them and capturing the output
+	foreach (@$tests) { 
+		if (! -x $_) { 
+			$final_results .= "Error: Unable to run test: $_\n"; 
+			if ($verbose) { print $rgb_red . "Error" . $rgb_restore . ": Unable to run test: $_\n"; } 
+		} 	
+		else { 
+		        my $sys_command = $_ . " 2>&1";
+			my $test_result = system($sys_command);
+	
+			if ($test_result == 0) { 
+				if ($verbose) { print "$rgb_grey$_$rgb_restore [$rgb_green OK $rgb_restore]\n"; } 
+			} 
+			else { 
+				$test_result = $? >> 8;
+				if ($verbose) { print "$rgb_grey$_$rgb_restore [$rgb_red FAIL $rgb_restore]\n"; } 
+				if ($test_result eq "") { $test_result = "UNKNOWN ERROR"; } 
+				my $test_name = fileparse($_); 
+				$final_results .= "$rgb_yellow $test_name $rgb_restore\n $rgb_grey $test_result $rgb_restore\n"; 
+			} 
+
+		} # End if executeable
+
+	} 
+
+	# If we got some results then prepend the hostname, this just makes
+	# it easier to identify these results
+	if ($final_results ne "") { 
+		my $hostname = `hostname`; 
+		chomp($hostname); 
+		$final_results = "$rgb_red### $hostname ###$rgb_restore\n$final_results"; 
+	} 
+		
+	return $final_results; 
+
+} # End Run Tests sub
+
+# Send some E-mail already
+sub send_mail {
+    my $to = shift;
+    my $subject = shift;
+    my $body = shift;
+    my $debug; 
+
+    my $smtp = Net::SMTP->new($core->{'mail_server'},
+                              Timeout => 10,
+                              Debug => $debug);
+
+    $smtp->mail($core->{'mail_from'});
+    $smtp->to($to);
+
+    $smtp->data();
+    $smtp->datasend("To: $to\n");
+    $smtp->datasend("Subject: $subject\n");
+    $smtp->datasend("\n");
+    $smtp->datasend("$body\n");
+    $smtp->dataend();
+    $smtp->quit;
+}
+

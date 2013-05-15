@@ -1,0 +1,34 @@
+# Copyright Dalhousie University 2009 (c) - Karl Vollmer
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License v2
+# as published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+###############################################################################
+# This is the default config file for the sysverify application developed at
+# Dalhousie University, please copy this to base.cfg
+[core]
+# Mail From
+# This defines what e-mail address will be used by sysverify when it sends
+# e-mail out
+# DEFAULT: root@localhost
+mail_from=root@localhost
+
+# SSH Proccesses
+# This tells sysverify how many ssh proccesses should be spawned when using 
+# pSSH, it is recommended to set this number to some multiple of the number
+# of hosts you wish to monitor
+# DEFAULT: 10
+ssh_processes=10
+
+# PDSH Binary
+# This must be the full path to the PDSH binary
+#pdsh_bin=/usr/local/pdsh/bin/pdsh

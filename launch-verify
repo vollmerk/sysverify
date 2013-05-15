@@ -1,0 +1,72 @@
+#!/usr/bin/perl
+# Copyright Dalhousie University 2009 (c) - Karl Vollmer
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License v2
+# as published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+###############################################################################
+
+use strict;
+use FindBin qw($Bin);
+use Data::Dumper;
+use Getopt::Long;
+
+# Load the Init script that in turn sets up configure() as well
+# as the config file
+require $Bin . '/init.pl';
+init();
+
+my $final_results;
+my $cluster_name;
+my $verbose=''; 
+
+
+# Handle the text colors
+my $rgb_restore = "\e[00m";
+my $rgb_yellow  = "\e[00;33m";
+my $rgb_red     = "\e[01;31m";
+my $rgb_green   = "\e[01;32m";
+my $rgb_grey    = "\e[01;30m"; 
+
+
+Getopt::Long::Configure('bundling','no_ignore_case');
+GetOptions (
+        "cluster|c=s"   => \$cluster_name,
+        "verbose|v"     => \$verbose,);
+
+# Make sure the config we've selected exists
+if (! -s "$Bin/config/$cluster_name.cfg") {
+        print $rgb_red . "Error$rgb_restore: Unable to find $cluster_name config file\n";
+        die;
+}
+
+# Load the base configuration
+my $cluster_config = read_config("$Bin/config/$cluster_name.cfg");
+configure($cluster_config);
+my %core = configure('core');
+my $core = \%core;
+
+# Verify how many nodes we've got in the current node list and see if it's accurate
+my $node_count = int(`cat $Bin/config/$cluster_name.nodes | wc -l`);
+if ($verbose) { 
+	print $rgb_yellow . "$node_count nodes found, launching PDSH proccesses$rgb_restore\n";
+} 
+
+# Now we go ahead and launch PSSH against our nodes list
+# and run the sysverify command (we assume we're on a shared / identical path)
+# do the nodes, later we might allow a config that would change the path
+my $command = "$Bin/sysverify -c $cluster_name"; 
+if ($verbose) { $command .= " -v"; } 
+my $pdsh_bin = $core->{'pdsh_bin'}; 
+my $ssh_connections = $core->{'ssh_processes'};
+$final_results = `$pdsh_bin -w ^$Bin/config/$cluster_name.nodes -f $ssh_connections -R ssh "$command"`; 
+print $final_results; 

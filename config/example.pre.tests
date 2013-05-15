@@ -1,0 +1,6 @@
+# This file defines which tests will be run before sysverify performs any other tests
+# syntax is simple, either put the exact script name as contained with the test
+# directory, this can include a path. Example /mysql/verify-tables.sh would
+# run the script ./test/mysql/verify-tables.sh If you would like it to run an
+# entire directory use the * symbol, for example /mysql/* would run all test in
+# ./test/mysql

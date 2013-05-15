@@ -1,0 +1,106 @@
+#!/usr/bin/perl
+# Copyright Dalhousie University 2009 (c) - Karl Vollmer
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License v2
+# as published by the Free Software Foundation.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+###############################################################################
+use strict;
+use FindBin qw($Bin);
+use Getopt::Long;
+
+require $Bin . '/init.pl'; 
+init(); 
+
+my $unknown_hosts; 
+my $nodes; 
+my $cluster_name; 
+my $verbose; 
+
+# Handle the text colors
+my $rgb_restore = "\e[00m";
+my $rgb_yellow  = "\e[00;33m";
+my $rgb_red     = "\e[01;31m";
+my $rgb_green   = "\e[01;32m";
+my $rgb_grey    = "\e[01;30m";
+
+Getopt::Long::Configure('bundling','no_ignore_case');
+GetOptions (
+        "cluster|c=s"   => \$cluster_name,
+        "verbose|v"     => \$verbose,);
+
+if ($cluster_name eq "" || not $cluster_name) {
+        print $rgb_red . "Error:$rgb_restore No config selected, unable to continue\n";
+        die;
+}
+
+# Load the base configuration
+my $cluster_config = read_config("$Bin/config/$cluster_name.cfg");
+configure($cluster_config);
+my %core = configure('core');
+my $core = \%core;
+
+my $internal_network = $core->{'internal_network'}; 
+my $iplist = `ping -b $internal_network -n -w 5 | awk '/^64 bytes from/ { getline; print \$4}' | sed 's/.\$//'`;
+chomp($iplist); 
+if ($verbose) { print $rgb_yellow . "Broadcast Ping output$rgb_restore\n" . $iplist . "\n------------\n"; } 
+
+
+# Explode and cut off the warning at the top
+my @ips = split(/\n/,$iplist);
+my %results; 
+my $results = \%results; 
+
+# If our Ping method of pulling hosts doesn't work then we'll have to trust
+# that SGE is listing the nodes properly
+if ($iplist eq "" || (scalar @ips < $core->{'nodes'})) { 
+	if ($verbose) { print $rgb_red . "Error:$rgb_restore Unable to find enough hosts using ping, falling back to SGE qhost\n"; } 
+	$iplist = `qhost | grep "$core->{'node_dns_prefix'}" | awk '{print \$1}'`;
+	if ($verbose) { print $rgb_yellow . "SGE qhost output$rgb_restore\n" . $iplist . "\n------------\n"; }
+	@ips = split(/\n/,$iplist); 
+} 
+
+
+# Itterate through the ip addresses, and do some investigation on them to try to
+# figure out what's a node and what's not
+foreach (@ips) {
+
+	my $hostname = ""; 
+
+	# If this is an IP address do the dns lookup
+	if ($_ =~ /\d+\.\d+\.\d+\.\d+/) { 
+	        # First let's try the easy way out and look for the hostname
+	        $hostname = `host $_ | awk '/domain name pointer/ {getline; print \$5};' | sed 's/.\$//'`;
+	        chomp($hostname);
+	}
+        if ($hostname eq "") {
+                $results->{$_} = 1;
+        }
+	else { 
+	        $results->{$hostname} = 1; 
+	} 
+} # End foreach ips
+
+# If we've actually found something write it out to the ./config/[CLUSTER].nodes file
+foreach (keys %results) { 
+	# Make sure they match the node hostname prefix
+	if (/^$core->{'node_dns_prefix'}/) { 
+		$nodes .= $_ . "\n"; 
+	} 
+}
+
+# Make sure we have something, if we do then output it to the file
+if ($nodes ne "") { 
+	open NODEOUTPUT, ">" . $Bin . "/config/$cluster_name.nodes"; 
+	print NODEOUTPUT $nodes; 
+	close NODEOUTPUT; 
+} 
