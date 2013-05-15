@@ -1,6 +1,14 @@
-# This directory contains all test scripts/programs that may be run by the
-# sysverify application. All scripts MUST respond in the following fashion
-# If everything is ok, and all tests passed "0" should be returned to STDOUT by
-# the script. Any other response will be considered an error and the string
-# returned will be considered an error. If there is NULL or an empty string
-# returned it will be considered a "Unknown Error" 
+# Sysverify Tests #
+
+This directory contains all test scripts/programs that may be run by the
+sysverify application. All scripts MUST respond in the following fashion
+
+### OK ###
+* exit code "0" with nothing sent to STDOUT
+
+### Failure ###
+* exit code anything but zero
+
+STDERR is redirected to STDOUT and all output to STDOUT is used as the
+result of the test. If the exit code is not zero but there is nothing in
+STDOUT/STDERR then it is considered an "UNKNOWN ERROR"
