@@ -54,9 +54,15 @@ my $cluster_config = read_config("$Bin/config/$cluster_name.cfg");
 configure($cluster_config);
 my %core = configure('core');
 my $core = \%core;
+my $hostlist = "$Bin/config/$cluster_name.nodes";
+
+# If they've defined a custom hostlist file use that
+if ($core->{'hostlist'}) { 
+	$hostlist = $core->{'hostlist'};
+}
 
 # Verify how many nodes we've got in the current node list and see if it's accurate
-my $node_count = int(`cat $Bin/config/$cluster_name.nodes | wc -l`);
+my $node_count = int(`cat $hostlist | wc -l`);
 if ($verbose) { 
 	print $rgb_yellow . "$node_count nodes found, launching PDSH proccesses$rgb_restore\n";
 } 
@@ -68,5 +74,5 @@ my $command = "$Bin/sysverify -c $cluster_name";
 if ($verbose) { $command .= " -v"; } 
 my $pdsh_bin = $core->{'pdsh_bin'}; 
 my $ssh_connections = $core->{'ssh_processes'};
-$final_results = `$pdsh_bin -w ^$Bin/config/$cluster_name.nodes -f $ssh_connections -R ssh "$command"`; 
+$final_results = `$pdsh_bin -w ^$hostlist -f $ssh_connections -R ssh "$command"`; 
 print $final_results; 
